@@ -29,6 +29,16 @@ def extract_revenue_facts(company_facts):
                     "end_date": entry.get("end"),
                     "form": entry.get("form"),
                     "accession_number": entry.get("accn"),
+                    "filed_date": entry.get("filed"),
                     "gaap_basis": "GAAP",
                 })
     return facts
+
+def dedupe_facts(facts):
+    best = {}
+    for fact in facts:
+        key = (fact["canonical_concept"], fact["start_date"], fact["end_date"])
+        current = best.get(key)
+        if current is None or fact["filed_date"] < current["filed_date"]:
+            best[key] = fact
+    return list(best.values())
