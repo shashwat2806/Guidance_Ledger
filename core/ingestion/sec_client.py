@@ -22,15 +22,11 @@ class SECClient:
         if elapsed < MIN_INTERVAL:
             time.sleep(MIN_INTERVAL - elapsed)
 
-    def _cache_path(self, url):
+    def _cache_path(self, url, suffix):
         key = hashlib.sha256(url.encode()).hexdigest()
-        return CACHE_DIR / f"{key}.json"
+        return CACHE_DIR / f"{key}.{suffix}"
 
-    def get(self, url, use_cache=True):
-        cache_path = self._cache_path(url)
-        if use_cache and cache_path.exists():
-            return json.loads(cache_path.read_text())
-
+    def _request(self, url):
         headers = {"User-Agent": self.user_agent}
         backoff = 1.0
         for attempt in range(5):
@@ -39,9 +35,7 @@ class SECClient:
             self.last_request = time.monotonic()
 
             if resp.status_code == 200:
-                data = resp.json()
-                cache_path.write_text(json.dumps(data))
-                return data
+                return resp
 
             if resp.status_code in (429, 500, 502, 503, 504):
                 time.sleep(backoff)
@@ -51,3 +45,22 @@ class SECClient:
             resp.raise_for_status()
 
         raise RuntimeError(f"SEC request failed after retries: {url}")
+
+    def get(self, url, use_cache=True):
+        cache_path = self._cache_path(url, "json")
+        if use_cache and cache_path.exists():
+            return json.loads(cache_path.read_text())
+
+        resp = self._request(url)
+        data = resp.json()
+        cache_path.write_text(json.dumps(data))
+        return data
+
+    def get_text(self, url, use_cache=True):
+        cache_path = self._cache_path(url, "txt")
+        if use_cache and cache_path.exists():
+            return cache_path.read_text(encoding="utf-8")
+
+        resp = self._request(url)
+        cache_path.write_text(resp.text, encoding="utf-8")
+        return resp.text
