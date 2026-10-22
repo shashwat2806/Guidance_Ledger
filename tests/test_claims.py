@@ -39,6 +39,8 @@ def claim_json(**overrides):
 
 VALID_CLAIM_JSON = json.dumps([claim_json()])
 
+HEADLINE = "Revenue of $11.3 billion, up 11% Y/Y and in CC, including $456 million Informatica contribution"
+
 
 def patch_completion(monkeypatch, responses):
     calls = []
@@ -49,6 +51,11 @@ def patch_completion(monkeypatch, responses):
 
     monkeypatch.setattr("core.extraction.claims.litellm.completion", fake_completion)
     return calls
+
+
+def extract_one(monkeypatch, **overrides):
+    patch_completion(monkeypatch, [json.dumps([claim_json(**overrides)])])
+    return extract_claims("some press release text")[0]
 
 
 def test_extracted_claim_requires_at_least_one_value():
@@ -209,3 +216,38 @@ def test_growth_claims_are_not_subject_to_the_dollar_check(monkeypatch):
     assert len(calls) == 1
     assert claims[0].metric == "revenue_growth"
     assert claims[0].value_low == 11.0
+
+
+def test_basis_is_assumed_gaap_when_quote_is_silent(monkeypatch):
+    claim = extract_one(monkeypatch, claim_quote=HEADLINE, comparison_basis=None)
+
+    assert claim.comparison_basis == "GAAP"
+    assert claim.basis_assumed is True
+
+
+def test_basis_is_gaap_without_assumption_when_quote_says_gaap(monkeypatch):
+    claim = extract_one(monkeypatch, claim_quote="GAAP revenue of $11.3 billion", comparison_basis=None)
+
+    assert claim.comparison_basis == "GAAP"
+    assert claim.basis_assumed is False
+
+
+@pytest.mark.parametrize("quote", [
+    "Non-GAAP revenue of $11.3 billion",
+    "Revenue grew 12% in constant currency",
+    "Organic revenue growth of 7%",
+    "Revenue excluding Informatica grew 7%",
+    "Pro forma revenue of $11.3 billion",
+])
+def test_basis_is_non_gaap_for_qualifier_phrases(monkeypatch, quote):
+    claim = extract_one(monkeypatch, claim_quote=quote, comparison_basis=None)
+
+    assert claim.comparison_basis == "non-GAAP"
+    assert claim.basis_assumed is False
+
+
+def test_models_basis_label_is_ignored_in_favor_of_the_quote(monkeypatch):
+    claim = extract_one(monkeypatch, claim_quote=HEADLINE, comparison_basis="non-GAAP")
+
+    assert claim.comparison_basis == "GAAP"
+    assert claim.basis_assumed is True

@@ -1,5 +1,6 @@
 ﻿import json
 import os
+import re
 import time
 from typing import Literal, Optional
 
@@ -7,6 +8,11 @@ import litellm
 from pydantic import BaseModel, Field, model_validator
 
 MIN_REVENUE_DOLLARS = 1_000_000
+NON_GAAP_PHRASES = re.compile(
+    r"non[\s-]?gaap|constant[\s-]currency|organic|adjusted|pro[\s-]?forma|excluding|excl\.",
+    re.IGNORECASE,
+)
+GAAP_WORD = re.compile(r"\bgaap\b", re.IGNORECASE)
 
 EXTRACTION_PROMPT = """Extract claims about TOTAL company revenue from this earnings press release excerpt. Ignore subscription and support revenue, remaining performance obligation, cRPO, margins, EPS, and cash flow.
 
@@ -15,7 +21,6 @@ Return a JSON array. For each claim, return an object with:
 - claim_type: "reported" if it describes a period that has already ended, or "guidance" if it is a forward-looking outlook, expectation, raise, or initiation
 - metric: "revenue" (a dollar amount) or "revenue_growth" (a percentage change)
 - value_low, value_high: for revenue, FULL dollars as a plain number (write 11300000000, never 11.3 or 11,300). For revenue_growth, the percentage as a number (write 11.0 for 11%). Use the same number for both if it is a single figure.
-- comparison_basis: "GAAP" or "non-GAAP" if stated, otherwise null
 - period_end: the period-end date in YYYY-MM-DD format if stated, otherwise null
 - extraction_confidence: your confidence this claim was extracted correctly, 0 to 1
 
@@ -35,6 +40,7 @@ class ExtractedClaim(BaseModel):
     value_low: Optional[float] = None
     value_high: Optional[float] = None
     comparison_basis: Optional[Literal["GAAP", "non-GAAP"]] = None
+    basis_assumed: bool = False
     period_end: Optional[str] = None
     extraction_confidence: float = Field(ge=0.0, le=1.0)
 
@@ -78,12 +84,21 @@ def extract_claims(text, model=None, max_retries=3):
                 items = items.get("claims", [items])
             claims = [ExtractedClaim(**item) for item in items]
             _check_extraction(items, claims)
-            return claims
+            return [basis_from_quote(claim) for claim in claims]
         except (ValueError, TypeError) as exc:
             last_error = validation_error = str(exc)
             continue
 
     raise RuntimeError(f"extraction failed after {max_retries} attempts: {last_error}")
+
+
+def basis_from_quote(claim):
+    if NON_GAAP_PHRASES.search(claim.claim_quote):
+        return claim.model_copy(update={"comparison_basis": "non-GAAP", "basis_assumed": False})
+    if GAAP_WORD.search(claim.claim_quote):
+        return claim.model_copy(update={"comparison_basis": "GAAP", "basis_assumed": False})
+    # total revenue is a GAAP line item; do not extend this default to margins or EPS
+    return claim.model_copy(update={"comparison_basis": "GAAP", "basis_assumed": True})
 
 
 def _check_extraction(items, claims):
