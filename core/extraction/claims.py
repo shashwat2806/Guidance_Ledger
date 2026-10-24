@@ -7,6 +7,8 @@ from typing import Literal, Optional
 import litellm
 from pydantic import BaseModel, Field, model_validator
 
+from core.extraction.spans import locate_quote
+
 MIN_REVENUE_DOLLARS = 1_000_000
 NON_GAAP_PHRASES = re.compile(
     r"non[\s-]?gaap|constant[\s-]currency|organic|adjusted|pro[\s-]?forma|excluding|excl\.",
@@ -17,7 +19,7 @@ GAAP_WORD = re.compile(r"\bgaap\b", re.IGNORECASE)
 EXTRACTION_PROMPT = """Extract claims about TOTAL company revenue from this earnings press release excerpt. Ignore subscription and support revenue, remaining performance obligation, cRPO, margins, EPS, and cash flow.
 
 Return a JSON array. For each claim, return an object with:
-- claim_quote: the exact text of the claim
+- claim_quote: the claim copied word for word from the text, with no changes
 - claim_type: "reported" if it describes a period that has already ended, or "guidance" if it is a forward-looking outlook, expectation, raise, or initiation
 - metric: "revenue" (a dollar amount) or "revenue_growth" (a percentage change)
 - value_low, value_high: for revenue, FULL dollars as a plain number (write 11300000000, never 11.3 or 11,300). For revenue_growth, the percentage as a number (write 11.0 for 11%). Use the same number for both if it is a single figure.
@@ -42,6 +44,8 @@ class ExtractedClaim(BaseModel):
     comparison_basis: Optional[Literal["GAAP", "non-GAAP"]] = None
     basis_assumed: bool = False
     period_end: Optional[str] = None
+    source_start: Optional[int] = None
+    source_end: Optional[int] = None
     extraction_confidence: float = Field(ge=0.0, le=1.0)
 
     @model_validator(mode="after")
@@ -84,7 +88,7 @@ def extract_claims(text, model=None, max_retries=3):
                 items = items.get("claims", [items])
             claims = [ExtractedClaim(**item) for item in items]
             _check_extraction(items, claims)
-            return [basis_from_quote(claim) for claim in claims]
+            return [with_source_span(basis_from_quote(claim), text) for claim in claims]
         except (ValueError, TypeError) as exc:
             last_error = validation_error = str(exc)
             continue
@@ -99,6 +103,13 @@ def basis_from_quote(claim):
         return claim.model_copy(update={"comparison_basis": "GAAP", "basis_assumed": False})
     # total revenue is a GAAP line item; do not extend this default to margins or EPS
     return claim.model_copy(update={"comparison_basis": "GAAP", "basis_assumed": True})
+
+
+def with_source_span(claim, text):
+    span = locate_quote(text, claim.claim_quote)
+    if span is None:
+        return claim
+    return claim.model_copy(update={"source_start": span[0], "source_end": span[1]})
 
 
 def _check_extraction(items, claims):
