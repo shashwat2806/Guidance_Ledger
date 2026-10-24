@@ -25,6 +25,10 @@ def build_evidence_card(claim, text, source, fact, prior_fact=None, verify=verif
         "end": claim.source_end,
         "excerpt": text[claim.source_start:claim.source_end],
     }
+
+    if fact is None:
+        return {**_abstain(_no_fact_reason(claim)), **card}
+
     card["filed_fact"] = _fact_summary(fact)
     if claim.metric == "revenue_growth" and prior_fact is not None:
         card["prior_fact"] = _fact_summary(prior_fact)
@@ -35,6 +39,12 @@ def build_evidence_card(claim, text, source, fact, prior_fact=None, verify=verif
 
 def _abstain(reason):
     return {"verdict": "insufficient_evidence", "difference": None, "abstention_reason": reason}
+
+
+def _no_fact_reason(claim):
+    if not claim.period_end:
+        return "claim states no period, so no filed figure can be matched"
+    return f"no filed revenue figure found for the period ending {claim.period_end}"
 
 
 def _claim_summary(claim):
