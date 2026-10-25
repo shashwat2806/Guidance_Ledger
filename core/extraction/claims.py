@@ -7,6 +7,7 @@ from typing import Literal, Optional
 import litellm
 from pydantic import BaseModel, Field, model_validator
 
+from core.extraction.periods import release_period_end
 from core.extraction.spans import locate_quote
 
 MIN_REVENUE_DOLLARS = 1_000_000
@@ -44,6 +45,7 @@ class ExtractedClaim(BaseModel):
     comparison_basis: Optional[Literal["GAAP", "non-GAAP"]] = None
     basis_assumed: bool = False
     period_end: Optional[str] = None
+    period_from_release: bool = False
     source_start: Optional[int] = None
     source_end: Optional[int] = None
     extraction_confidence: float = Field(ge=0.0, le=1.0)
@@ -55,7 +57,7 @@ class ExtractedClaim(BaseModel):
         return self
 
 
-def extract_claims(text, model=None, max_retries=3):
+def extract_claims(text, model=None, max_retries=3, period_end=None):
     model = model or os.environ.get("LLM_MODEL", "gpt-4o-mini")
     kwargs = {}
     if os.environ.get("LLM_API_KEY"):
@@ -67,6 +69,7 @@ def extract_claims(text, model=None, max_retries=3):
         kwargs["reasoning_format"] = "parsed"
 
     prompt = EXTRACTION_PROMPT.format(text=text)
+    release_end = period_end or release_period_end(text)
     last_error = None
     validation_error = None
     backoff = 15
@@ -88,7 +91,10 @@ def extract_claims(text, model=None, max_retries=3):
                 items = items.get("claims", [items])
             claims = [ExtractedClaim(**item) for item in items]
             _check_extraction(items, claims)
-            return [with_source_span(basis_from_quote(claim), text) for claim in claims]
+            return [
+                with_source_span(with_release_period(basis_from_quote(claim), release_end), text)
+                for claim in claims
+            ]
         except (ValueError, TypeError) as exc:
             last_error = validation_error = str(exc)
             continue
@@ -103,6 +109,12 @@ def basis_from_quote(claim):
         return claim.model_copy(update={"comparison_basis": "GAAP", "basis_assumed": False})
     # total revenue is a GAAP line item; do not extend this default to margins or EPS
     return claim.model_copy(update={"comparison_basis": "GAAP", "basis_assumed": True})
+
+
+def with_release_period(claim, period_end):
+    if period_end is None or claim.claim_type != "reported":
+        return claim
+    return claim.model_copy(update={"period_end": period_end, "period_from_release": True})
 
 
 def with_source_span(claim, text):

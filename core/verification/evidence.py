@@ -15,6 +15,8 @@ def build_evidence_card(claim, text, source, fact, prior_fact=None, verify=verif
     }
     if claim.basis_assumed:
         card["rules_applied"].append("basis not stated in the quote; assumed GAAP")
+    if claim.period_from_release:
+        card["rules_applied"].append("period end read from the release's opening paragraph")
 
     if claim.source_start is None or claim.source_end is None:
         return {**_abstain("claim quote not found in source text, so there is no citation"), **card}

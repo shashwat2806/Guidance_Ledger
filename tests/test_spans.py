@@ -122,3 +122,21 @@ def test_span_from_a_prefix_matches_span_in_the_full_text(monkeypatch):
     from_full = extract_claims(SOURCE)[0]
 
     assert (from_prefix.source_start, from_prefix.source_end) == (from_full.source_start, from_full.source_end)
+
+
+def test_quote_wrapped_in_quotation_marks_still_matches():
+    text = (
+        "up 5.8% Y/Y \u201cWe delivered a phenomenal quarter, delivering $41.5 billion in revenue, "
+        "up 10% year-over-year and we passed a milestone,\u201d said Marc"
+    )
+    quote = '"We delivered a phenomenal quarter, delivering $41.5 billion in revenue, up 10% year-over-year"'
+
+    start, end = locate_quote(text, quote)
+
+    assert text[start:end] == (
+        "We delivered a phenomenal quarter, delivering $41.5 billion in revenue, up 10% year-over-year"
+    )
+
+
+def test_a_quote_of_only_quotation_marks_returns_none():
+    assert locate_quote(SOURCE, '""') is None

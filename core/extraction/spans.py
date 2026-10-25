@@ -7,6 +7,7 @@
     "\u2014": "-",
     "\u00a0": " ",
 }
+QUOTE_MARKS = '"\u201c\u201d'
 
 
 def normalize(text):
@@ -30,7 +31,7 @@ def normalize(text):
 
 
 def locate_quote(text, quote):
-    norm_quote, _ = normalize(quote.strip())
+    norm_quote, _ = normalize(quote.strip().strip(QUOTE_MARKS).strip())
     if not norm_quote:
         return None
     norm_text, index_map = normalize(text)
