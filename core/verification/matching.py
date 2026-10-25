@@ -5,8 +5,17 @@ QUARTER_DAYS = (80, 100)
 YEAR_DAYS = (350, 380)
 PRIOR_YEAR_WINDOW_DAYS = 14
 
+FISCAL_LABEL = r"\b(?:fiscal\s+(?:year\s+)?|fy\s?)\d{2,4}"
 QUARTER_WORDS = re.compile(r"quarter|\bq[1-4]\b", re.IGNORECASE)
-YEAR_WORDS = re.compile(r"full[\s-]year|fiscal[\s-]year|annual|year ended|for the year", re.IGNORECASE)
+QUARTER_LABELS = re.compile(
+    rf"(?:quarter|\bq[1-4])\s*(?:of\s+)?{FISCAL_LABEL}"
+    rf"|{FISCAL_LABEL}\s*(?:(?:first|second|third|fourth)\s+)?(?:quarter|q[1-4]\b)",
+    re.IGNORECASE,
+)
+YEAR_WORDS = re.compile(
+    rf"full[\s-]year|\bannual\b|year ended|for the year|fiscal[\s-]year|{FISCAL_LABEL}",
+    re.IGNORECASE,
+)
 PARTIAL_WORDS = re.compile(r"six months|nine months|first half|second half|year[\s-]to[\s-]date|ytd", re.IGNORECASE)
 
 
@@ -14,11 +23,11 @@ def period_kind(claim):
     quote = claim.claim_quote
     if PARTIAL_WORDS.search(quote):
         return None
-    if QUARTER_WORDS.search(quote):
-        return "quarter"
-    if YEAR_WORDS.search(quote):
-        return "year"
-    return "quarter"
+    has_quarter = bool(QUARTER_WORDS.search(quote))
+    has_year = bool(YEAR_WORDS.search(QUARTER_LABELS.sub(" ", quote)))
+    if has_quarter and has_year:
+        return None
+    return "year" if has_year else "quarter"
 
 
 def match_facts(claim, facts):

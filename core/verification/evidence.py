@@ -1,4 +1,5 @@
-﻿from core.verification.verifier import verify_claim
+﻿from core.verification.matching import period_kind
+from core.verification.verifier import verify_claim
 
 
 def build_evidence_card(claim, text, source, fact, prior_fact=None, verify=verify_claim):
@@ -42,9 +43,12 @@ def _abstain(reason):
 
 
 def _no_fact_reason(claim):
+    kind = period_kind(claim)
+    if kind is None:
+        return "claim's period is ambiguous or partial, so no filed figure can be matched"
     if not claim.period_end:
         return "claim states no period, so no filed figure can be matched"
-    return f"no filed revenue figure found for the period ending {claim.period_end}"
+    return f"no filed {kind} revenue figure found for the period ending {claim.period_end}"
 
 
 def _claim_summary(claim):

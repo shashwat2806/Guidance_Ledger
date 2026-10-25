@@ -138,3 +138,43 @@ def test_card_says_so_when_the_claim_has_no_period():
                                None, verify=fake_verifier([]))
 
     assert "no period" in card["abstention_reason"]
+
+
+def test_fy_abbreviation_without_a_quarter_word_is_a_year():
+    assert period_kind(make_claim("FY26 revenue of $41.5 billion, up 10% Y/Y")) == "year"
+
+
+def test_quarter_with_fiscal_label_is_a_quarter():
+    for quote in (
+        "Second quarter fiscal 2027 revenue of $11.3 billion",
+        "Q2 FY27 revenue of $11.3 billion",
+        "FY27 second quarter revenue of $11.3 billion",
+        "Revenue of $11.3 billion for the fourth quarter of fiscal 2026",
+    ):
+        assert period_kind(make_claim(quote)) == "quarter", quote
+
+
+def test_conflicting_quarter_and_year_wording_is_ambiguous():
+    for quote in (
+        "We delivered a phenomenal quarter to close out a record fiscal 2026, delivering $41.5 billion in revenue",
+        "Fourth quarter and full year revenue of $11.2 billion and $41.5 billion",
+    ):
+        assert period_kind(make_claim(quote)) is None, quote
+
+
+def test_card_explains_when_the_period_is_ambiguous():
+    quote = "We delivered a phenomenal quarter to close out a record fiscal 2026, delivering $41.5 billion in revenue"
+
+    card = build_evidence_card(make_claim(quote), quote, {"document_url": "u", "accession_number": "a"},
+                               None, verify=fake_verifier([]))
+
+    assert "ambiguous" in card["abstention_reason"]
+
+
+def test_card_names_the_kind_of_period_it_searched_for():
+    quote = "FY26 revenue of $41.5 billion"
+
+    card = build_evidence_card(make_claim(quote, period_end="2026-01-31"), quote,
+                               {"document_url": "u", "accession_number": "a"}, None, verify=fake_verifier([]))
+
+    assert "year revenue figure" in card["abstention_reason"]
