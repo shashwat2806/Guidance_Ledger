@@ -34,8 +34,12 @@ def match_facts(claim, facts):
     kind = period_kind(claim)
     if kind is None or not claim.period_end:
         return None, None
+    return find_facts(facts, claim.period_end, kind)
+
+
+def find_facts(facts, period_end, kind):
     try:
-        target = date.fromisoformat(claim.period_end)
+        target = date.fromisoformat(period_end)
     except ValueError:
         return None, None
 
