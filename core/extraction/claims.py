@@ -16,6 +16,9 @@ NON_GAAP_PHRASES = re.compile(
     re.IGNORECASE,
 )
 GAAP_WORD = re.compile(r"\bgaap\b", re.IGNORECASE)
+GAAP_COLUMNS = re.compile(r"non[\s-]?gaap\s+gaap|gaap\s+non[\s-]?gaap(?:\s*\(\d+\))?", re.IGNORECASE)
+CHANGE_AMOUNT = re.compile(r"\bby\s+\$\s?([\d.,]+)\s*(billion|million|bn|b|m)?\b", re.IGNORECASE)
+UNIT_FACTORS = {"billion": 1e9, "bn": 1e9, "b": 1e9, "million": 1e6, "m": 1e6}
 
 EXTRACTION_PROMPT = """Extract claims about TOTAL company revenue from this earnings press release excerpt. Ignore subscription and support revenue, remaining performance obligation, cRPO, margins, EPS, and cash flow.
 
@@ -26,6 +29,8 @@ Return a JSON array. For each claim, return an object with:
 - value_low, value_high: for revenue, FULL dollars as a plain number (write 11300000000, never 11.3 or 11,300). For revenue_growth, the percentage as a number (write 11.0 for 11%). Use the same number for both if it is a single figure.
 - period_end: the period-end date in YYYY-MM-DD format if stated, otherwise null
 - extraction_confidence: your confidence this claim was extracted correctly, 0 to 1
+
+Ignore amounts that only describe a change to guidance, such as "raises guidance by $200M". Extract only the guided level or range.
 
 If one sentence states both a dollar amount and a growth rate, return two separate claims, one per metric.
 
@@ -67,6 +72,8 @@ def extract_claims(text, model=None, max_retries=3, period_end=None):
     if os.environ.get("LLM_REASONING_EFFORT"):
         kwargs["reasoning_effort"] = os.environ["LLM_REASONING_EFFORT"]
         kwargs["reasoning_format"] = "parsed"
+    if os.environ.get("LLM_TEMPERATURE"):
+        kwargs["temperature"] = float(os.environ["LLM_TEMPERATURE"])
 
     prompt = EXTRACTION_PROMPT.format(text=text)
     release_end = period_end or release_period_end(text)
@@ -94,6 +101,7 @@ def extract_claims(text, model=None, max_retries=3, period_end=None):
             return [
                 with_source_span(with_release_period(basis_from_quote(claim), release_end), text)
                 for claim in claims
+                if not _is_change_amount(claim)
             ]
         except (ValueError, TypeError) as exc:
             last_error = validation_error = str(exc)
@@ -103,9 +111,10 @@ def extract_claims(text, model=None, max_retries=3, period_end=None):
 
 
 def basis_from_quote(claim):
-    if NON_GAAP_PHRASES.search(claim.claim_quote):
+    quote = GAAP_COLUMNS.sub(" ", claim.claim_quote)
+    if NON_GAAP_PHRASES.search(quote):
         return claim.model_copy(update={"comparison_basis": "non-GAAP", "basis_assumed": False})
-    if GAAP_WORD.search(claim.claim_quote):
+    if GAAP_WORD.search(quote):
         return claim.model_copy(update={"comparison_basis": "GAAP", "basis_assumed": False})
     # total revenue is a GAAP line item; do not extend this default to margins or EPS
     return claim.model_copy(update={"comparison_basis": "GAAP", "basis_assumed": True})
@@ -122,6 +131,20 @@ def with_source_span(claim, text):
     if span is None:
         return claim
     return claim.model_copy(update={"source_start": span[0], "source_end": span[1]})
+
+
+def _is_change_amount(claim):
+    if claim.metric != "revenue":
+        return False
+    values = [v for v in (claim.value_low, claim.value_high) if v is not None]
+    for number, unit in CHANGE_AMOUNT.findall(claim.claim_quote):
+        try:
+            delta = float(number.replace(",", "")) * UNIT_FACTORS.get(unit.lower(), 1)
+        except ValueError:
+            continue
+        if delta and any(abs(v - delta) <= 0.005 * delta for v in values):
+            return True
+    return False
 
 
 def _check_extraction(items, claims):
