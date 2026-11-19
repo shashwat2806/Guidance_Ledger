@@ -413,3 +413,84 @@ def test_temperature_is_left_out_when_not_configured(monkeypatch):
     extract_claims("some press release text")
 
     assert "temperature" not in seen
+
+
+def test_gaap_and_non_gaap_column_headers_do_not_make_a_claim_non_gaap(monkeypatch):
+    quote = "Full Year FY27 Guidance GAAP Non-GAAP (1) Revenue $46.1 - $46.4 billion"
+
+    claim = extract_one(monkeypatch, claim_quote=quote, comparison_basis=None)
+
+    assert claim.comparison_basis == "GAAP"
+    assert claim.basis_assumed is True
+
+
+def test_real_non_gaap_wording_beside_column_headers_still_counts(monkeypatch):
+    quote = "GAAP Non-GAAP (1) Non-GAAP revenue of $11.3 billion"
+
+    claim = extract_one(monkeypatch, claim_quote=quote, comparison_basis=None)
+
+    assert claim.comparison_basis == "non-GAAP"
+
+
+def test_a_change_to_guidance_is_not_taken_as_a_revenue_level(monkeypatch):
+    items = [
+        claim_json(claim_quote="Raises FY27 revenue guidance by $200M", claim_type="guidance",
+                   value_low=200000000, value_high=200000000),
+        claim_json(claim_quote="Raises full year FY27 revenue guidance to $46.1 billion to $46.4 billion",
+                   claim_type="guidance", value_low=46100000000, value_high=46400000000),
+    ]
+    patch_completion(monkeypatch, [json.dumps(items)])
+
+    claims = extract_claims("some press release text")
+
+    assert [c.value_high for c in claims] == [46400000000]
+
+
+def test_a_billion_dollar_change_is_recognized_too(monkeypatch):
+    item = claim_json(claim_quote="Lowers revenue guidance by $1.5 billion", claim_type="guidance",
+                      value_low=1500000000, value_high=1500000000)
+    patch_completion(monkeypatch, [json.dumps([item])])
+
+    assert extract_claims("some press release text") == []
+
+
+def test_a_level_stated_beside_a_change_is_kept(monkeypatch):
+    item = claim_json(
+        claim_quote="Raises full year FY27 revenue guidance by $100 million, now expects revenue of $46.1 billion to $46.4 billion",
+        claim_type="guidance", value_low=46100000000, value_high=46400000000,
+    )
+    patch_completion(monkeypatch, [json.dumps([item])])
+
+    claims = extract_claims("some press release text")
+
+    assert len(claims) == 1
+
+
+def test_temperature_is_passed_when_configured(monkeypatch):
+    seen = {}
+
+    def fake_completion(**kwargs):
+        seen.update(kwargs)
+        return FakeResponse(VALID_CLAIM_JSON)
+
+    monkeypatch.setattr("core.extraction.claims.litellm.completion", fake_completion)
+    monkeypatch.setenv("LLM_TEMPERATURE", "0")
+
+    extract_claims("some press release text")
+
+    assert seen["temperature"] == 0.0
+
+
+def test_temperature_is_left_out_when_not_configured(monkeypatch):
+    seen = {}
+
+    def fake_completion(**kwargs):
+        seen.update(kwargs)
+        return FakeResponse(VALID_CLAIM_JSON)
+
+    monkeypatch.setattr("core.extraction.claims.litellm.completion", fake_completion)
+    monkeypatch.delenv("LLM_TEMPERATURE", raising=False)
+
+    extract_claims("some press release text")
+
+    assert "temperature" not in seen
